@@ -1,0 +1,71 @@
+name: 机票监控
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # 每 30 分钟检查一次（GitHub 可能会延迟几分钟）
+  workflow_dispatch:          # 允许在网页上手动点按钮运行
+    inputs:
+      mode:
+        description: "运行方式"
+        required: true
+        default: check
+        type: choice
+        options:
+          - check       # 正常检查机票
+          - test-email  # 只发测试邮件
+          - test-bark   # 只发 Bark 测试警报
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flight-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 下载代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖和浏览器
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: 运行监控
+        env:
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          BARK_SERVER: ${{ secrets.BARK_SERVER }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          MONITOR_URL: ${{ secrets.MONITOR_URL }}
+          MODE: ${{ vars.MODE || 'flights' }}
+          MIN_PRICE: ${{ vars.MIN_PRICE || '7000' }}
+          MAX_PRICE: ${{ vars.MAX_PRICE || '8000' }}
+          CURRENCY: ${{ vars.CURRENCY || 'CNY' }}
+          RUN_MODE: ${{ inputs.mode || 'check' }}
+        run: |
+          case "$RUN_MODE" in
+            test-email) python monitor.py --test-email ;;
+            test-bark)  python monitor.py --test-bark ;;
+            *)          python monitor.py ;;
+          esac
+
+      - name: 上传截图（识别失败时才有）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ github.run_id }}
+          path: screenshots/
+          if-no-files-found: ignore
+          retention-days: 7
